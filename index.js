@@ -19,13 +19,13 @@ mongoose.connect(URL, {
     useUnifiedTopology: true
 }).then(() => console.log('Connected!'));
 
+const {cloudinary} = require('./Utils/cloudinary.js')
 
 const userLogin = require('./models/userdata_model.js')
-const urlShort = require('./models/shorturl_model.js')
 const adminLogin = require('./models/admindata_model.js')
 const productDetails = require('./models/product_model.js')
 const Order = require('./models/order_model.js')
-app.use(express.json())
+// app.use(express.json())
 app.use(cors({
     origin: '*',
     // credentials: true,
@@ -33,7 +33,9 @@ app.use(cors({
 }))
 
 // app.set("trust proxy", 1);
-
+app.use(express.static('public'));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use(
     session({
@@ -262,7 +264,7 @@ const forgotPassword = async (req, res, user) => {
                             }
                         ).then(async () => {
                             // mail url
-                            const mailURL = process.env.FRONTEND_URL + (user === "user" ? "/updatePassword/:":"/adminupdatePassword/:") + docs._id + "?emailToken=" + emailtoken + "&name=" + req.body.username
+                            const mailURL = process.env.FRONTEND_URL + (user === "user" ? "/updatePassword/:" : "/adminupdatePassword/:") + docs._id + "?emailToken=" + emailtoken + "&name=" + req.body.username
 
                             //send email
                             const mailOptions = {
@@ -307,8 +309,8 @@ const forgotPassword = async (req, res, user) => {
     }
 }
 
-app.put("/forgotpassword",async (req, res) => forgotPassword(req, res, "user"))
-app.put("/adminforgotpassword",async (req, res) => forgotPassword(req, res, "admin"))
+app.put("/forgotpassword", async (req, res) => forgotPassword(req, res, "user"))
+app.put("/adminforgotpassword", async (req, res) => forgotPassword(req, res, "admin"))
 
 const updatePassword = async (req, res, user) => {
     try {
@@ -321,29 +323,29 @@ const updatePassword = async (req, res, user) => {
         const decodedEmailToken = jwt.verify(req.body.emailToken, JWT_SECRET)
         if (decodedEmailToken) {
             console.log("TOKEN Authorized!", decodedEmailToken);
-                (user === "user" ? userLogin : adminLogin).findOne({ username: req.body.username }).then(async (docs) => {
-                    // token email name === body.username
+            (user === "user" ? userLogin : adminLogin).findOne({ username: req.body.username }).then(async (docs) => {
+                // token email name === body.username
 
-                    //token valid ? expired or what
-                    //if all ok encrypt body password and update in db
-                    if (decodedEmailToken.name == docs.username) {
-                        var salt = await bcrypt.genSalt(10)
-                        var hash = await bcrypt.hash(req.body.password, salt)
-                        req.body.password = hash
-                        await (user === "user" ? userLogin : adminLogin).updateOne({ _id: docs._id },
-                            {
-                                $set: {
-                                    password: req.body.password
-                                }
+                //token valid ? expired or what
+                //if all ok encrypt body password and update in db
+                if (decodedEmailToken.name == docs.username) {
+                    var salt = await bcrypt.genSalt(10)
+                    var hash = await bcrypt.hash(req.body.password, salt)
+                    req.body.password = hash
+                    await (user === "user" ? userLogin : adminLogin).updateOne({ _id: docs._id },
+                        {
+                            $set: {
+                                password: req.body.password
                             }
-                        ).then(async (doc) => {
-                            console.log("doc", doc);
-                            await res.send({ message: "Password Changed" });
-                        })
-                            .catch((err) => { console.log(err); res.send({ message: err }) })
-                    }
+                        }
+                    ).then(async (doc) => {
+                        console.log("doc", doc);
+                        await res.send({ message: "Password Changed" });
+                    })
+                        .catch((err) => { console.log(err); res.send({ message: err }) })
+                }
 
-                })
+            })
         }
         //check user there? user email verified? send email with reset Link 
     } catch (error) {
@@ -424,27 +426,30 @@ let authorize = (req, res, next) => {
 
 
 //multer------------------------------------------------------------
-const multer = require("multer");
+// const multer = require("multer");
 
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, "./files");
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now();
-        cb(null, uniqueSuffix + file.originalname);
-    },
-});
+// const storage = multer.diskStorage({
+//     destination: function (req, file, cb) {
+//         cb(null, "./files");
+//     },
+//     filename: function (req, file, cb) {
+//         const uniqueSuffix = Date.now();
+//         cb(null, uniqueSuffix + file.originalname);
+//     },
+// });
 
-const upload = multer({ storage: storage });
+// const upload = multer({ storage: storage });
 
-app.post("/upload-files",authorize, upload.single("file"), async (req, res) => {
-    console.log(req.file);
-    const fileName = req.file.filename;
+app.post("/uploadProduct", authorize, async (req, res) => {
     try {
+        console.log("req", req);
+        const fileStr = req.body.file;
+        const uploadResponse = await cloudinary.uploader.upload(fileStr, {
+            upload_preset: 'upload_img',
+        });
         await productDetails.create({
             name: req.body.name,
-            fileName: fileName,
+            fileName: uploadResponse.url,
             price: req.body.price,
             category: req.body.category,
             location: req.body.location,
@@ -467,7 +472,7 @@ app.get("/get-files", async (req, res) => {
     } catch (error) { }
 });
 
-app.post("/editProduct",authorize, async (req, res) => {
+app.post("/editProduct", authorize, async (req, res) => {
     await productDetails.findOne({ _id: req.body._id }).then(async (docs) => {
         if (!docs) {
             res.status(404).json({ message: "Not Found" })
@@ -496,7 +501,7 @@ app.post("/editProduct",authorize, async (req, res) => {
 })
 
 
-app.post('/placeOrder',authorize, async (req, res) => {
+app.post('/placeOrder', authorize, async (req, res) => {
     try {
         // Create a new order instance from the request body
         const newOrder = new Order(req.body);
@@ -511,7 +516,7 @@ app.post('/placeOrder',authorize, async (req, res) => {
     }
 });
 
-app.get('/orders',authorize, async (req, res) => {
+app.get('/orders', authorize, async (req, res) => {
     try {
         // Fetch all orders from the database
         const orders = await Order.find();
@@ -523,7 +528,7 @@ app.get('/orders',authorize, async (req, res) => {
     }
 });
 
-app.put('/updateOrders/:orderId',authorize, async (req, res) => {
+app.put('/updateOrders/:orderId', authorize, async (req, res) => {
     try {
         const orderId = req.params.orderId;
         const updatedOrderData = req.body;
@@ -544,7 +549,7 @@ app.put('/updateOrders/:orderId',authorize, async (req, res) => {
     }
 });
 
-app.get('/myOrders/:userId',authorize, async (req, res) => {
+app.get('/myOrders/:userId', authorize, async (req, res) => {
     try {
         const userId = req.params.userId;
 
